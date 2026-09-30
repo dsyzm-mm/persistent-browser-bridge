@@ -39,7 +39,6 @@ The daemon binds to `127.0.0.1` by default and owns the Playwright process, acti
 PBB requires Python 3.11 or newer. Edge is preferred, Chrome is supported, and Playwright Chromium is the fallback.
 
 ```console
-git clone https://github.com/your-org/persistent-browser-bridge.git
 cd persistent-browser-bridge
 python -m pip install -e .
 ```

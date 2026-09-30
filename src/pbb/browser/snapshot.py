@@ -12,7 +12,16 @@ SNAPSHOT_SCRIPT = r"""
 () => {
   const visible = (el) => {
     const s = getComputedStyle(el), r = el.getBoundingClientRect();
-    return s.visibility !== 'hidden' && s.display !== 'none' && r.width > 0 && r.height > 0;
+    return s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0' && r.width > 0 && r.height > 0;
+  };
+  const exposed = (el) => {
+    if (!visible(el)) return false;
+    const r = el.getBoundingClientRect();
+    if (r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) return false;
+    const x = Math.max(0, Math.min(innerWidth - 1, r.left + r.width / 2));
+    const y = Math.max(0, Math.min(innerHeight - 1, r.top + r.height / 2));
+    const top = document.elementFromPoint(x, y);
+    return !!top && (el.contains(top) || top.contains(el));
   };
   const clean = (v) => (v || '').replace(/\s+/g, ' ').trim();
   const selector = (el) => {
@@ -64,9 +73,9 @@ SNAPSHOT_SCRIPT = r"""
   const headings = [...document.querySelectorAll('h1,h2,h3')].filter(visible).slice(0, 30)
     .map(el => ({level:Number(el.tagName[1]), text:clean(el.innerText).slice(0, 500)})).filter(x => x.text);
   const root = document.querySelector('main') || document.body;
-  const clone = root.cloneNode(true);
-  clone.querySelectorAll('script,style,svg,noscript,input,textarea,select,button,a,nav,header,footer,[hidden],[aria-hidden=true]').forEach(x => x.remove());
-  const text = clean(clone.innerText).slice(0, 20000);
+  const blocks = [...root.querySelectorAll('p,li,dt,dd,blockquote,pre,article,[role=article],[role=status],[role=alert]')]
+    .filter(exposed).map(el => clean(el.innerText)).filter(Boolean);
+  const text = clean(blocks.length ? blocks.join(' ') : root.innerText).slice(0, 20000);
   return {elements, headings, text};
 }
 """

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>PBB Acceptance</title>
+  </head>
+  <body>
+    <main>
+      <h1>PBB Acceptance</h1>
+      <label for="message">Message</label>
+      <input id="message" placeholder="Type a message">
+      <input id="password" type="password" value="snapshot-must-not-leak">
+      <button id="submit" type="button" onclick="document.querySelector('#result').textContent = document.querySelector('#message').value">Submit</button>
+      <p id="result">Waiting</p>
+      <button id="save-profile" type="button" onclick="localStorage.setItem('pbb-marker', 'profile persisted'); document.querySelector('#persisted').textContent = 'profile persisted'">Save profile marker</button>
+      <p id="persisted">No profile marker</p>
+      <a id="download" download="pbb-acceptance.txt" href="data:text/plain,PBB%20download%20works">Download fixture</a>
+    </main>
+  </body>
+  <script>
+    document.querySelector('#persisted').textContent = localStorage.getItem('pbb-marker') || 'No profile marker';
+  </script>
+</html>

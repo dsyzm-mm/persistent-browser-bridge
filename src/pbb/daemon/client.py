@@ -22,9 +22,8 @@ class DaemonClient:
         self, method: str, path: str, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         try:
-            response = httpx.request(
-                method, f"{self.base_url}{path}", json=payload, timeout=self.timeout
-            )
+            with httpx.Client(timeout=self.timeout, trust_env=False) as client:
+                response = client.request(method, f"{self.base_url}{path}", json=payload)
         except httpx.RequestError as exc:
             raise DaemonUnavailable("PBB daemon is not running. Run `pbb start` first.") from exc
         try:

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PBB benchmark run",
+  "type": "object",
+  "required": ["system", "task", "completed", "duration_ms", "tool_calls", "failures", "retries"],
+  "properties": {
+    "system": {"enum": ["pbb", "computer_use"]},
+    "task": {"type": "string"},
+    "completed": {"type": "boolean"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "agent_turns": {"type": "integer", "minimum": 0},
+    "screenshots": {"type": "integer", "minimum": 0},
+    "tool_calls": {"type": "integer", "minimum": 0},
+    "snapshot_bytes": {"type": "integer", "minimum": 0},
+    "failures": {"type": "integer", "minimum": 0},
+    "retries": {"type": "integer", "minimum": 0},
+    "token_usage": {"type": ["integer", "null"], "minimum": 0}
+  },
+  "additionalProperties": false
+}
+

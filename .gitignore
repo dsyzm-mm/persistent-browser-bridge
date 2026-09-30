@@ -9,10 +9,22 @@ venv/
 dist/
 build/
 *.log
+logs/
+profiles/
+downloads/
+screenshots/
+browser-data/
+user-data-dir/
 pbb-screenshot.png
 /acceptance.png
 /acceptance-downloads/
 .env
+.env.*
+config.local
+config.local.*
+.idea/
+.vscode/
+*.code-workspace
 .DS_Store
 Thumbs.db
 

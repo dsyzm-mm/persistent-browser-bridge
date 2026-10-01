@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
-import socket
-import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +17,9 @@ from pbb.browser.profile import create_profile, delete_profile, list_profiles, p
 from pbb.browser.snapshot import format_snapshot
 from pbb.config import config_path, load_settings
 from pbb.daemon.client import DaemonClient, DaemonUnavailable
-from pbb.utils.paths import logs_dir, profiles_dir
+from pbb.daemon.lifecycle import port_available as _port_available
+from pbb.daemon.lifecycle import start_daemon
+from pbb.utils.paths import profiles_dir
 
 app = typer.Typer(no_args_is_help=True, help="Persistent, DOM-first browser control for AI agents.")
 profile_app = typer.Typer(help="Manage dedicated PBB browser profiles.")
@@ -59,15 +57,6 @@ def call(path: str, payload: dict[str, Any] | None, as_json: bool, title: str) -
     return data
 
 
-def _port_available(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.bind((host, port))
-            return True
-        except OSError:
-            return False
-
-
 @app.command()
 def start(
     profile: str = typer.Option(None, help="Dedicated PBB profile name."),
@@ -77,64 +66,8 @@ def start(
     """Start the local daemon and persistent browser."""
     settings = load_settings()
     selected_profile = profile or settings.default_profile
-    client = DaemonClient(settings)
-    try:
-        current = client.status()
-        current["message"] = "PBB already running"
-        emit(current, json_output, "PBB already running")
-        return
-    except DaemonUnavailable:
-        pass
-    if not _port_available(settings.daemon_host, settings.daemon_port):
-        emit(
-            {
-                "success": False,
-                "error": "port_in_use",
-                "message": f"Port {settings.daemon_port} is already in use",
-                "details": {},
-            },
-            json_output,
-        )
-    create_profile(selected_profile)
-    log_path = logs_dir() / "daemon.log"
-    log_handle = log_path.open("a", encoding="utf-8")
-    command = [sys.executable, "-m", "pbb.daemon.server", "--profile", selected_profile]
-    if browser:
-        command.extend(("--browser", browser))
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=log_handle,
-        stderr=log_handle,
-        close_fds=True,
-        creationflags=creationflags,
-    )
-    log_handle.close()
-    deadline = time.monotonic() + 30
-    last_error = "daemon startup timed out"
-    while time.monotonic() < deadline:
-        time.sleep(0.25)
-        try:
-            data = client.status()
-            emit(data, json_output, "PBB started")
-            return
-        except DaemonUnavailable as exc:
-            last_error = str(exc)
-            if process.poll() is not None:
-                last_error = f"daemon exited with code {process.returncode}"
-                break
-    emit(
-        {
-            "success": False,
-            "error": "daemon_start_failed",
-            "message": last_error,
-            "details": {"log": str(log_path)},
-        },
-        json_output,
-    )
+    data = start_daemon(settings, selected_profile, browser)
+    emit(data, json_output, "PBB started" if data.get("success") else None)
 
 
 @app.command()
@@ -154,10 +87,15 @@ def open_url(url: str, json_output: bool = typer.Option(False, "--json")) -> Non
 
 
 @app.command()
-def snapshot(json_output: bool = typer.Option(False, "--json")) -> None:
+def snapshot(
+    json_output: bool = typer.Option(False, "--json"),
+    selector: str | None = typer.Option(None, "--selector"),
+    max_elements: int | None = typer.Option(None, "--max-elements"),
+    max_chars: int | None = typer.Option(None, "--max-chars"),
+) -> None:
     """Capture a compact, safe DOM snapshot."""
     try:
-        data = DaemonClient(load_settings()).post("/snapshot")
+        data = DaemonClient(load_settings()).post("/snapshot", {"selector": selector, "max_elements": max_elements, "max_chars": max_chars})
     except DaemonUnavailable as exc:
         data = {"success": False, "error": "daemon_not_running", "message": str(exc), "details": {}}
     if data.get("success") and not json_output:
@@ -221,6 +159,42 @@ def close(json_output: bool = typer.Option(False, "--json")) -> None:
 
 
 @app.command()
+def tabs(json_output: bool = typer.Option(False, "--json")) -> None:
+    """List open persistent browser tabs."""
+    try:
+        data = DaemonClient(load_settings()).request("GET", "/tabs")
+    except DaemonUnavailable as exc:
+        data = {"success": False, "error": "daemon_not_running", "message": str(exc), "details": {}}
+    emit(data, json_output, "PBB Tabs")
+
+
+tab_app = typer.Typer(help="Switch or close persistent browser tabs.")
+app.add_typer(tab_app, name="tab")
+
+
+@tab_app.callback(invoke_without_command=True)
+def tab_switch(index: int = typer.Argument(None), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Switch to tab INDEX, such as `pbb tab 1`."""
+    if index is None:
+        return
+    call("/tabs/switch", {"index": index}, json_output, "Tab switched")
+
+
+@tab_app.command("close")
+def tab_close(index: int, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Close a tab without ending the last remaining session tab."""
+    call("/tabs/close", {"index": index}, json_output, "Tab closed")
+
+
+@app.command()
+def mcp() -> None:
+    """Run the PBB stdio Model Context Protocol server."""
+    from pbb.mcp.server import main
+
+    main()
+
+
+@app.command()
 def shutdown(json_output: bool = typer.Option(False, "--json")) -> None:
     """Alias for close."""
     close(json_output)
@@ -246,6 +220,8 @@ def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
         "success": True,
         "python": sys.version.split()[0],
         "playwright": "installed",
+        "mcp_sdk": "installed",
+        "mcp_server": "available",
         "browsers": browsers,
         "profiles_directory": str(profiles_dir()),
         "config": str(config_path()),

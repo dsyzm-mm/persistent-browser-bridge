@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from pbb.browser.locator import LocatorResolutionError
 from pbb.browser.manager import BrowserManager
 from pbb.config import Settings
+from pbb.constants import API_VERSION, __version__
 
 
 class NavigateRequest(BaseModel):
@@ -23,7 +24,7 @@ class NavigateRequest(BaseModel):
 
 
 class TargetRequest(BaseModel):
-    target: str
+    target: str | dict[str, str]
 
 
 class FillRequest(TargetRequest):
@@ -37,6 +38,18 @@ class DownloadRequest(TargetRequest):
 class ScreenshotRequest(BaseModel):
     output: str = "pbb-screenshot.png"
     full_page: bool = False
+
+
+class SnapshotRequest(BaseModel):
+    max_chars: int | None = None
+    max_elements: int | None = None
+    include_text: bool = True
+    selector: str | None = None
+
+
+class TabRequest(BaseModel):
+    index: int | None = None
+    tab_id: str | None = None
 
 
 def error(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -56,7 +69,7 @@ def create_app(settings: Settings, profile: str, browser: str | None = None) -> 
 
     app = FastAPI(
         title="Persistent Browser Bridge",
-        version="0.1.0",
+        version=__version__,
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -82,7 +95,15 @@ def create_app(settings: Settings, profile: str, browser: str | None = None) -> 
     @app.get("/status")
     async def status() -> dict[str, Any]:
         result = await manager.status()
-        result.update({"daemon_running": True, "pid": os.getpid()})
+        result.update(
+            {
+                "daemon_running": True,
+                "pid": os.getpid(),
+                "pbb_version": __version__,
+                "api_version": API_VERSION,
+                "capabilities": ["snapshot_v2", "tabs", "download", "screenshot", "mcp", "iframe_basic"],
+            }
+        )
         return result
 
     @app.post("/start")
@@ -95,8 +116,11 @@ def create_app(settings: Settings, profile: str, browser: str | None = None) -> 
         return await manager.navigate(request.url)
 
     @app.post("/snapshot")
-    async def snapshot() -> dict[str, Any]:
-        return await manager.snapshot()
+    async def snapshot(request: SnapshotRequest | None = None) -> dict[str, Any]:
+        request = request or SnapshotRequest()
+        return await manager.snapshot(
+            request.max_chars, request.max_elements, request.include_text, request.selector
+        )
 
     @app.post("/click")
     async def click(request: TargetRequest) -> dict[str, Any]:
@@ -118,6 +142,18 @@ def create_app(settings: Settings, profile: str, browser: str | None = None) -> 
     @app.post("/screenshot")
     async def screenshot(request: ScreenshotRequest) -> dict[str, Any]:
         return await manager.screenshot(Path(request.output), request.full_page)
+
+    @app.get("/tabs")
+    async def tabs() -> dict[str, Any]:
+        return await manager.tabs()
+
+    @app.post("/tabs/switch")
+    async def switch_tab(request: TabRequest) -> dict[str, Any]:
+        return await manager.switch_tab(request.index, request.tab_id)
+
+    @app.post("/tabs/close")
+    async def close_tab(request: TabRequest) -> dict[str, Any]:
+        return await manager.close_tab(request.index, request.tab_id)
 
     @app.post("/close")
     async def close() -> dict[str, Any]:

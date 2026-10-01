@@ -51,6 +51,8 @@ Install the published package:
 python -m pip install persistent-browser-bridge
 ```
 
+PyPI currently provides v0.1.0. The v0.2.0 GitHub release is intentionally not being published to PyPI yet; use a repository checkout for v0.2.0 until a later PyPI release.
+
 Or install the latest repository checkout for development:
 
 ```console

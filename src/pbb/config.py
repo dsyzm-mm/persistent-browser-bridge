@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +40,17 @@ class Settings(BaseModel):
         return normalized
 
 
-ENV_MAP = {
+def str_to_bool(value: str) -> bool:
+    return value.lower() in {"1", "true", "yes"}
+
+
+ENV_MAP: dict[str, tuple[str, Callable[[str], Any]]] = {
     "PBB_BROWSER": ("browser", str),
     "PBB_PROFILE": ("default_profile", str),
     "PBB_PORT": ("daemon_port", int),
     "PBB_DOWNLOAD_DIR": ("download_dir", Path),
     "PBB_TIMEOUT": ("timeout", int),
+    "PBB_HEADLESS": ("headless", str_to_bool),
 }
 
 

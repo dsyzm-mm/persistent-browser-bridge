@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -30,12 +31,18 @@ def result_data(result: object) -> dict[str, object]:
     return json.loads(content[0].text)
 
 
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_reuses_daemon_and_operates_browser(
     isolated_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixture = (Path(__file__).parent / "fixtures" / "action_page.html").resolve().as_uri()
-    monkeypatch.setenv("PBB_PORT", "19765")
+    monkeypatch.setenv("PBB_PORT", str(free_port()))
     monkeypatch.setenv("PBB_PROFILE", "mcp-integration")
     monkeypatch.setenv("PBB_HEADLESS", "false")
     params = StdioServerParameters(
@@ -72,10 +79,13 @@ async def test_mcp_stdio_downloads_through_existing_daemon(
     isolated_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixture = (Path(__file__).parent / "fixtures" / "action_page.html").resolve().as_uri()
-    monkeypatch.setenv("PBB_PORT", "19766")
-    monkeypatch.setenv("PBB_PROFILE", "mcp-download-integration")
+    port = free_port()
+    profile = f"mcp-download-{port}"
+    monkeypatch.setenv("PBB_PORT", str(port))
+    monkeypatch.setenv("PBB_PROFILE", profile)
     monkeypatch.setenv("PBB_HEADLESS", "false")
-    assert start_daemon(load_settings(), "mcp-download-integration", "edge")["success"] is True
+    start_result = start_daemon(load_settings(), profile, "edge")
+    assert start_result["success"] is True, start_result
     params = StdioServerParameters(
         command=sys.executable, args=["-m", "pbb.mcp.server"], env=dict(os.environ)
     )

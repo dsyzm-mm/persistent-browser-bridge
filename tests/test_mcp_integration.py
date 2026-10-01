@@ -15,6 +15,8 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from pbb.config import load_settings
+from pbb.daemon.lifecycle import start_daemon
 pytestmark = pytest.mark.skipif(
     os.getenv("PBB_RUN_BROWSER_INTEGRATION") != "1",
     reason="set PBB_RUN_BROWSER_INTEGRATION=1 for real browser acceptance",
@@ -62,3 +64,30 @@ async def test_mcp_stdio_reuses_daemon_and_operates_browser(
             saved = result_data(await session.call_tool("browser_screenshot", {"path": str(isolated_dirs / "mcp.png")}))
             assert Path(str(saved["saved_path"])).exists()
             assert result_data(await session.call_tool("browser_close", {}))["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_downloads_through_existing_daemon(
+    isolated_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = (Path(__file__).parent / "fixtures" / "action_page.html").resolve().as_uri()
+    monkeypatch.setenv("PBB_PORT", "19766")
+    monkeypatch.setenv("PBB_PROFILE", "mcp-download-integration")
+    monkeypatch.setenv("PBB_HEADLESS", "false")
+    assert start_daemon(load_settings(), "mcp-download-integration", "edge")["success"] is True
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "pbb.mcp.server"], env=dict(os.environ)
+    )
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        assert result_data(await session.call_tool("browser_start", {}))["success"] is True
+        assert result_data(await session.call_tool("browser_open", {"url": fixture}))["success"] is True
+        downloaded = result_data(
+            await session.call_tool(
+                "browser_download",
+                {"target": "#download", "output_dir": str(isolated_dirs / "downloads")},
+            )
+        )
+        assert downloaded["success"] is True, downloaded
+        assert Path(str(downloaded["saved_path"])).exists()
+        assert result_data(await session.call_tool("browser_close", {}))["success"] is True

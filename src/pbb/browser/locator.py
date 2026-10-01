@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import Locator, Page
+from playwright.async_api import Frame, Locator, Page
 
 from pbb.browser.snapshot import SnapshotStore
 
@@ -47,13 +47,33 @@ async def _unique(locator: Locator, label: str) -> ResolvedLocator | None:
     return None
 
 
-async def resolve_locator(page: Page, store: SnapshotStore, target: str) -> ResolvedLocator:
+async def resolve_locator(
+    page: Page, store: SnapshotStore, target: str | dict[str, str]
+) -> ResolvedLocator:
+    if isinstance(target, dict):
+        role = target.get("role")
+        name = target.get("name")
+        if role and name:
+            result = await _unique(
+                page.get_by_role(role, name=name, exact=True),  # type: ignore[arg-type]
+                "role and name",
+            )
+            if result:
+                return result
+            raise LocatorResolutionError("element_not_found", f"No {role} named {name!r} was found")
+        for key, getter in (("label", page.get_by_label), ("placeholder", page.get_by_placeholder), ("text", page.get_by_text)):
+            if target.get(key):
+                result = await _unique(getter(target[key], exact=True), key)
+                if result:
+                    return result
+                raise LocatorResolutionError("element_not_found", f"No element matched {key}: {target[key]}")
+        raise LocatorResolutionError("invalid_target", "Role target needs role/name, label, placeholder, or text")
     match = re.fullmatch(r"(?:(s_[0-9a-f]+):)?@(\d+)", target)
     if match:
         explicit_snapshot, raw_id = match.groups()
         if explicit_snapshot and explicit_snapshot != store.snapshot_id:
             raise LocatorResolutionError(
-                "stale_snapshot", "Snapshot reference is no longer current"
+                "stale_snapshot_reference", "Snapshot reference is no longer current"
             )
         item = store.get(int(raw_id))
         if item is None:
@@ -61,18 +81,25 @@ async def resolve_locator(page: Page, store: SnapshotStore, target: str) -> Reso
                 "element_not_found", f"Snapshot element {target} was not found"
             )
         if page.url != store.page_url:
-            raise LocatorResolutionError("stale_snapshot", "Page URL changed after the snapshot")
-        locator = page.locator(item["selector"])
+            raise LocatorResolutionError("stale_snapshot_reference", "Page URL changed after the snapshot")
+        owner: Page | Frame = page
+        if "frame" in item:
+            frames = page.frames
+            frame_index = int(item["frame"])
+            if frame_index >= len(frames):
+                raise LocatorResolutionError("stale_snapshot_reference", "Snapshot frame no longer exists")
+            owner = frames[frame_index]
+        locator = owner.locator(item["selector"])
         if await locator.count() != 1:
             raise LocatorResolutionError(
-                "stale_snapshot", "Snapshot element changed or disappeared"
+                "stale_snapshot_reference", "Snapshot element changed or disappeared"
             )
         current = await locator.first.evaluate(
             "el => ({name:(el.getAttribute('aria-label') || el.innerText || el.getAttribute('name') || el.getAttribute('placeholder') || '').replace(/\\s+/g,' ').trim(), role:el.getAttribute('role') || ''})"
         )
         expected_name = item.get("name", "")
         if expected_name and current["name"] and expected_name != current["name"]:
-            raise LocatorResolutionError("stale_snapshot", "Snapshot element identity changed")
+            raise LocatorResolutionError("stale_snapshot_reference", "Snapshot element identity changed")
         return ResolvedLocator(
             locator.first, {"strategy": "snapshot", "snapshot_id": store.snapshot_id}
         )
@@ -100,4 +127,7 @@ async def resolve_locator(page: Page, store: SnapshotStore, target: str) -> Reso
         result = await _unique(locator, label)
         if result:
             return result
+    partial = await _unique(page.get_by_text(target, exact=False), "partial text")
+    if partial:
+        return partial
     raise LocatorResolutionError("element_not_found", f"No element matched target: {target}")

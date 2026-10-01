@@ -6,7 +6,7 @@ Persistent Browser Bridge (PBB) is a local browser-control layer built on Playwr
 
 **Persistent. DOM-first. Local-first. Agent-friendly. Low-context.**
 
-PBB is an early v0.1 release for normal, authorized browser automation. It is not a CAPTCHA bypass, anti-detection toolkit, credential collector, or scraping-evasion framework.
+PBB v0.2 adds first-class Model Context Protocol (MCP) support for normal, authorized browser automation. It is not a CAPTCHA bypass, anti-detection toolkit, credential collector, or scraping-evasion framework.
 
 ## Why PBB
 
@@ -28,11 +28,18 @@ PBB complements visual browser automation rather than replacing every use case.
 ## Architecture
 
 ```text
-AI agent -> pbb CLI -> localhost daemon -> Playwright
-         -> real Edge/Chrome -> dedicated persistent profile -> website
+Codex / Claude Code / Cursor / Agent
+                 |
+            CLI or MCP
+                 |
+          PBB service boundary
+                 |
+       local browser daemon -> Playwright
+                 |
+     persistent Edge / Chrome profile -> website
 ```
 
-The daemon binds to `127.0.0.1` by default and owns the Playwright process, active page, snapshot references, and download handling. CLI commands talk only to that local daemon, so a browser is not restarted for each action.
+The daemon binds to `127.0.0.1` by default and owns the only Playwright process, active page, snapshot references, and download handling. Both CLI and MCP are short-lived local clients of that daemon, so a browser is not restarted for each action or MCP reconnection.
 
 ## Installation
 
@@ -43,6 +50,8 @@ Install the published package:
 ```console
 python -m pip install persistent-browser-bridge
 ```
+
+PyPI currently provides v0.1.0. The v0.2.0 GitHub release is intentionally not being published to PyPI yet; use a repository checkout for v0.2.0 until a later PyPI release.
 
 Or install the latest repository checkout for development:
 
@@ -88,6 +97,8 @@ Deletion requires confirmation (or explicit `--yes`) and only removes directorie
 | `pbb status` | Show process, profile, browser, page, and tabs |
 | `pbb open URL` | Navigate and wait for `domcontentloaded` |
 | `pbb snapshot` | Return a compact DOM snapshot |
+| `pbb tabs` / `pbb tab INDEX` | List or switch persistent browser tabs |
+| `pbb tab close INDEX` | Close one tab without closing the final session tab |
 | `pbb click TARGET` | Click a reference, selector, or semantic target |
 | `pbb fill TARGET VALUE` | Fill a field; password values are never returned |
 | `pbb text TARGET` | Read visible element text |
@@ -104,7 +115,7 @@ Every action supports `--json`. Failures use a stable shape:
 
 ## Snapshots and targets
 
-`pbb snapshot --json` returns the page title, URL, headings, bounded visible text, and interactive elements. It excludes scripts, styles, hidden elements, cookies, password values, and hidden tokens. Internal selectors remain inside the daemon.
+Snapshot v2 returns the page title, URL, active tab, headings, form state, dialogs, iframe summary, table previews, bounded visible text, and interactive elements. It excludes scripts, styles, hidden elements, cookies, password values, and hidden tokens. Internal selectors remain inside the daemon. Use `--selector`, `--max-elements`, and `--max-chars` to bound a focused snapshot.
 
 ```json
 {
@@ -117,7 +128,7 @@ Every action supports `--json`. Failures use a stable shape:
 }
 ```
 
-Use `@1`, `@2`, or the explicit `s_123abc:@2` form. PBB rejects stale references after navigation or when element identity changes. It resolves targets conservatively: snapshot reference, unique selector, exact button/link role, label, placeholder, then exact text. Multiple matches return `ambiguous_target`; PBB never chooses one at random.
+Use `@1`, `@2`, or the explicit `s_123abc:@2` form. PBB rejects `stale_snapshot_reference` after navigation or when element identity changes. It resolves targets conservatively: snapshot reference, unique selector, exact role/name, label, placeholder, exact text, then an unambiguous partial text match. Multiple matches return `ambiguous_target`; PBB never chooses one at random. Basic iframe elements receive a `frame` field and remain usable through their snapshot reference.
 
 PowerShell reserves `@` syntax, so quote references there: `pbb click '@2'`. Bash and similar shells accept `pbb click @2`.
 
@@ -134,7 +145,7 @@ PBB waits for Playwright's download event and uses `save_as`. A click that does 
 
 PBB reads `config.toml` from the platform's application config directory. Supported keys are `browser`, `default_profile`, `daemon_host`, `daemon_port`, `download_dir`, `timeout`, `headless`, and `snapshot_max_chars`. v0.1 rejects non-loopback daemon hosts.
 
-Environment overrides: `PBB_BROWSER`, `PBB_PROFILE`, `PBB_PORT`, `PBB_DOWNLOAD_DIR`, and `PBB_TIMEOUT`.
+Environment overrides: `PBB_BROWSER`, `PBB_PROFILE`, `PBB_PORT`, `PBB_DOWNLOAD_DIR`, `PBB_TIMEOUT`, and `PBB_HEADLESS`.
 
 ## Privacy and security
 
@@ -142,7 +153,7 @@ PBB runs locally and includes no telemetry. Browser profiles remain on the devic
 
 ## Agent integration
 
-Recommended flow: check status, start if needed, inspect `snapshot --json`, use DOM actions, and only fall back to screenshots or Computer Use when the DOM is insufficient. Full guidance is in [docs/agent-integration.md](docs/agent-integration.md).
+Recommended MCP flow: `browser_status`, `browser_start` if needed, `browser_open`, `browser_snapshot`, DOM actions, then another snapshot. Full guidance is in [docs/mcp.md](docs/mcp.md) and [docs/agent-integration.md](docs/agent-integration.md).
 
 ### Codex integration
 
@@ -162,16 +173,27 @@ Browser strategy:
 8. Continue using the same profile after authentication.
 ```
 
-## Python SDK and MCP
+## MCP
 
-A stable Python SDK and MCP server are planned for v0.2. The daemon's local HTTP API is an implementation detail in v0.1 and may change. No SDK or MCP support is claimed in this release.
+Run the standard-input/output MCP server with:
+
+```console
+pbb mcp
+```
+
+The generic client configuration is `command: pbb`, `args: ["mcp"]`. It exposes `browser_start`, `browser_status`, `browser_open`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_text`, `browser_download`, `browser_screenshot`, `browser_tabs`, `browser_switch_tab`, `browser_close_tab`, and `browser_close`. It does not open a public MCP port. See [docs/mcp.md](docs/mcp.md), plus setup notes for [Codex](docs/integrations/codex.md), [Claude Code](docs/integrations/claude-code.md), and [Cursor](docs/integrations/cursor.md).
+
+| Interface | Best for |
+|---|---|
+| CLI | scripts and shell-based agents |
+| MCP | native agent tool integration |
 
 ## Limitations
 
 - Snapshot references are daemon-memory state and do not survive daemon restarts.
-- Shadow DOM, canvas-only controls, cross-origin frames, and highly virtualized UIs may need direct selectors or visual automation.
-- Recovery covers closed pages and stale PBB locks; full crash replay is planned.
-- One daemon controls one profile at a time in v0.1.
+- Canvas-only controls and highly virtualized UIs may need direct selectors or visual automation. Playwright's normal locator support is used for Shadow DOM and frames; pages that restrict access return a normal action error.
+- Recovery recreates a closed active tab and retains a daemon-owned profile across MCP client reconnects. It does not replay arbitrary in-progress work after a browser crash.
+- One daemon controls one profile at a time in v0.2.
 - Benchmarks are not published. PBB is designed to reduce repeated visual context usage, but no token or cost savings are claimed.
 
 ## Benchmark framework

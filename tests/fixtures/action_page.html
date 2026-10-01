@@ -15,6 +15,12 @@
       <button id="save-profile" type="button" onclick="localStorage.setItem('pbb-marker', 'profile persisted'); document.querySelector('#persisted').textContent = 'profile persisted'">Save profile marker</button>
       <p id="persisted">No profile marker</p>
       <a id="download" download="pbb-acceptance.txt" href="data:text/plain,PBB%20download%20works">Download fixture</a>
+      <a id="new-tab" target="_blank" href="about:blank">Open new tab</a>
+      <label><input id="enabled" type="checkbox" checked> Enabled</label>
+      <label for="choice">Choice</label><select id="choice"><option>First</option><option selected>Second</option></select>
+      <table><thead><tr><th>Name</th><th>Status</th></tr></thead><tbody><tr><td>Alice</td><td>Active</td></tr><tr><td>Bob</td><td>Pending</td></tr></tbody></table>
+      <iframe title="PBB frame" srcdoc="<button id='frame-button'>Frame action</button>"></iframe>
+      <dialog id="dialog"><p>Dialog text</p><button>Dismiss</button></dialog>
     </main>
   </body>
   <script>

@@ -36,6 +36,8 @@ class BrowserManager:
         self.store = SnapshotStore()
         self.lock = ProfileLock(create_profile(profile), profile)
         self.restarts = 0
+        self._tab_ids: dict[int, str] = {}
+        self._next_tab_id = 1
 
     async def start(self) -> None:
         if self.context:
@@ -132,18 +134,34 @@ class BrowserManager:
             "browser_restarted": restarted,
         }
 
-    async def snapshot(self) -> dict[str, Any]:
+    async def snapshot(
+        self,
+        max_chars: int | None = None,
+        max_elements: int | None = None,
+        include_text: bool = True,
+        selector: str | None = None,
+    ) -> dict[str, Any]:
         page, restarted = await self.page()
-        result = await capture_snapshot(page, self.store, self.settings.snapshot_max_chars)
+        result = await capture_snapshot(
+            page,
+            self.store,
+            max_chars if max_chars is not None else self.settings.snapshot_max_chars,
+            max_elements=max_elements,
+            include_text=include_text,
+            selector=selector,
+            active_tab_index=self._page_index(page),
+        )
         result["browser_restarted"] = restarted
         return result
 
-    async def click(self, target: str) -> dict[str, Any]:
+    async def click(self, target: str | dict[str, str]) -> dict[str, Any]:
         page, restarted = await self.page()
         resolved = await resolve_locator(page, self.store, target)
         started = time.perf_counter()
+        before_pages = len(self.context.pages) if self.context else 0
         await resolved.locator.click()
         await asyncio.sleep(0.15)
+        after_pages = len(self.context.pages) if self.context else before_pages
         return {
             "success": True,
             "action": "click",
@@ -151,9 +169,11 @@ class BrowserManager:
             "url": page.url,
             "duration_ms": round((time.perf_counter() - started) * 1000),
             "browser_restarted": restarted,
+            "new_tab_opened": after_pages > before_pages,
+            "new_tab_index": after_pages - 1 if after_pages > before_pages else None,
         }
 
-    async def fill(self, target: str, value: str) -> dict[str, Any]:
+    async def fill(self, target: str | dict[str, str], value: str) -> dict[str, Any]:
         page, restarted = await self.page()
         resolved = await resolve_locator(page, self.store, target)
         started = time.perf_counter()
@@ -169,7 +189,7 @@ class BrowserManager:
             "browser_restarted": restarted,
         }
 
-    async def text(self, target: str) -> dict[str, Any]:
+    async def text(self, target: str | dict[str, str]) -> dict[str, Any]:
         page, restarted = await self.page()
         resolved = await resolve_locator(page, self.store, target)
         return {
@@ -178,7 +198,7 @@ class BrowserManager:
             "browser_restarted": restarted,
         }
 
-    async def download(self, target: str, output: Path | None = None) -> dict[str, Any]:
+    async def download(self, target: str | dict[str, str], output: Path | None = None) -> dict[str, Any]:
         page, restarted = await self.page()
         resolved = await resolve_locator(page, self.store, target)
         try:
@@ -200,11 +220,86 @@ class BrowserManager:
         await download.save_as(saved_path)
         return {
             "success": True,
+            "filename": download.suggested_filename,
             "suggested_filename": download.suggested_filename,
             "saved_path": str(saved_path),
             "size": saved_path.stat().st_size,
             "browser_restarted": restarted,
         }
+
+    def _page_index(self, page: Page) -> int:
+        if not self.context:
+            return 0
+        pages = [item for item in self.context.pages if not item.is_closed()]
+        return pages.index(page) if page in pages else 0
+
+    def _tab_id(self, page: Page) -> str:
+        key = id(page)
+        if key not in self._tab_ids:
+            self._tab_ids[key] = f"tab_{self._next_tab_id}"
+            self._next_tab_id += 1
+        return self._tab_ids[key]
+
+    async def tabs(self) -> dict[str, Any]:
+        page, restarted = await self.page()
+        assert self.context is not None
+        items: list[dict[str, Any]] = []
+        for index, item in enumerate(candidate for candidate in self.context.pages if not candidate.is_closed()):
+            items.append(
+                {
+                    "index": index,
+                    "tab_id": self._tab_id(item),
+                    "title": await item.title(),
+                    "url": item.url,
+                    "active": item == page,
+                }
+            )
+        return {"success": True, "tabs": items, "browser_restarted": restarted}
+
+    def _tab_index(self, index: int | None, tab_id: str | None, pages: list[Page]) -> int:
+        if tab_id is not None:
+            for candidate_index, page in enumerate(pages):
+                if self._tab_id(page) == tab_id:
+                    return candidate_index
+            raise LocatorResolutionError("tab_not_found", f"Unknown tab: {tab_id}")
+        if index is None or index < 0:
+            raise LocatorResolutionError("tab_not_found", "A non-negative tab index or tab_id is required")
+        return index
+
+    async def switch_tab(self, index: int | None = None, tab_id: str | None = None) -> dict[str, Any]:
+        await self.page()
+        assert self.context is not None
+        pages = [item for item in self.context.pages if not item.is_closed()]
+        selected = self._tab_index(index, tab_id, pages)
+        if selected >= len(pages):
+            raise LocatorResolutionError("tab_not_found", f"Tab {selected} does not exist")
+        self.active_page = pages[selected]
+        await self.active_page.bring_to_front()
+        return {
+            "success": True,
+            "index": selected,
+            "tab_id": self._tab_id(self.active_page),
+            "url": self.active_page.url,
+            "title": await self.active_page.title(),
+        }
+
+    async def close_tab(self, index: int | None = None, tab_id: str | None = None) -> dict[str, Any]:
+        page, _ = await self.page()
+        assert self.context is not None
+        pages = [item for item in self.context.pages if not item.is_closed()]
+        selected = self._tab_index(index, tab_id, pages)
+        if selected >= len(pages):
+            raise LocatorResolutionError("tab_not_found", f"Tab {selected} does not exist")
+        if len(pages) == 1:
+            raise LocatorResolutionError("cannot_close_last_tab", "PBB keeps one tab open for a stable session")
+        closing = pages[selected]
+        await closing.close()
+        self._tab_ids.pop(id(closing), None)
+        if closing == page:
+            remaining = [item for item in self.context.pages if not item.is_closed()]
+            self.active_page = remaining[min(selected, len(remaining) - 1)]
+            await self.active_page.bring_to_front()
+        return {"success": True, "closed_index": selected, "tabs": len(self.context.pages)}
 
     async def screenshot(self, output: Path, full_page: bool) -> dict[str, Any]:
         page, restarted = await self.page()

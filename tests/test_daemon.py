@@ -24,6 +24,9 @@ def test_app_has_required_routes() -> None:
         "/text",
         "/download",
         "/screenshot",
+        "/tabs",
+        "/tabs/switch",
+        "/tabs/close",
         "/close",
         "/shutdown",
     } <= paths

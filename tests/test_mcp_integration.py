@@ -17,6 +17,7 @@ from mcp.client.stdio import stdio_client
 
 from pbb.config import load_settings
 from pbb.daemon.lifecycle import start_daemon
+
 pytestmark = pytest.mark.skipif(
     os.getenv("PBB_RUN_BROWSER_INTEGRATION") != "1",
     reason="set PBB_RUN_BROWSER_INTEGRATION=1 for real browser acceptance",
